@@ -11,11 +11,12 @@ RUN pip install --no-cache-dir \
 # Copy application code
 COPY backend/main.py .
 COPY backend/inference.py .
+COPY backend/rag/ ./rag/
 
 # Copy model weights
 COPY backend/model/ ./model/
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/papers /app/faiss_index
 
 EXPOSE 8000
 
