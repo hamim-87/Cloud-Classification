@@ -1,0 +1,38 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: eyes-on-earth-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - eyes-network
+    environment:
+      - BACKEND_URL=http://backend:8000
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: eyes-on-earth-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    networks:
+      - eyes-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  eyes-network:
+    driver: bridge
