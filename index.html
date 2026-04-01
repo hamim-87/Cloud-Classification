@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>-Eye on Cloud | Satellite Imagery Selector</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- CesiumJS -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+        <div class="nav-left">
+            <div class="logo-container">
+                <div class="nasa-logo">
+                    <!-- <svg viewBox="0 0 50 50" width="44" height="44">
+                        <circle cx="25" cy="25" r="24" fill="#0B3D91" stroke="#FC3D21" stroke-width="1"/>
+                        <!-- <text x="25" y="30" text-anchor="middle" fill="white" font-size="12" font-weight="bold" font-family="Inter">NASA</text> -->
+                    </svg> -->
+                </div>
+                <div class="title-group">
+                    <span class="title-main">Eyes on Cloud</span>
+                    <span class="title-divider">|</span>
+                    <span class="title-sub">Satellite Imagery Selector</span>
+                </div>
+            </div>
+        </div>
+        <div class="nav-right">
+            <a href="#" class="nav-link">HOME</a>
+            <a href="#" class="nav-link">ABOUT</a>
+        </div>
+    </header>
+
+    <!-- Instructions Panel -->
+    <div class="instructions-panel" id="instructionsPanel">
+        <div class="instructions-header">
+            <span class="instructions-icon">&#127758;</span>
+            <span class="instructions-title">SELECT 4 POINTS</span>
+        </div>
+        <p class="instructions-text">Click on the globe to place <strong>4 markers</strong>. A bounding box will be computed and satellite imagery fetched automatically.</p>
+        <div class="points-counter">
+            <span id="pointCount">0</span> / 4 points selected
+        </div>
+        <div class="points-list" id="pointsList"></div>
+        <button class="reset-btn" id="resetBtn">Reset Points</button>
+    </div>
+
+    <!-- Status Badge -->
+    <div class="status-badge" id="statusBadge">
+        <span class="status-dot"></span>
+        <span id="statusText">Ready — click on the globe</span>
+    </div>
+
+    <!-- Bounding Box Info -->
+    <div class="bbox-panel hidden" id="bboxPanel">
+        <div class="bbox-title">BOUNDING BOX</div>
+        <div class="bbox-row"><span>North:</span> <span id="bboxNorth">—</span></div>
+        <div class="bbox-row"><span>South:</span> <span id="bboxSouth">—</span></div>
+        <div class="bbox-row"><span>East:</span>  <span id="bboxEast">—</span></div>
+        <div class="bbox-row"><span>West:</span>  <span id="bboxWest">—</span></div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="hidden">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Fetching Satellite Imagery...</div>
+        <div class="loading-layer" id="loadingLayer"></div>
+    </div>
+
+    <!-- CesiumJS Container -->
+    <div id="cesiumContainer"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
