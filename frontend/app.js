@@ -18,6 +18,10 @@
     const bboxPanel = document.getElementById('bboxPanel');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingLayerEl = document.getElementById('loadingLayer');
+    const resultsPanel = document.getElementById('resultsPanel');
+    const resultsLoading = document.getElementById('resultsLoading');
+    const resultsBody = document.getElementById('resultsBody');
+    const resultsCloseBtn = document.getElementById('resultsCloseBtn');
 
     function initCesium() {
         const osmBase = new Cesium.UrlTemplateImageryProvider({
@@ -172,6 +176,8 @@
             showImagePreview(imageUrl, usedDate, bbox);
             updateStatus(`Satellite imagery loaded — ${usedDate}`, 'success');
             console.log(`[GIBS] Imagery loaded for ${usedDate}`);
+            // Automatically send image to backend for weather prediction
+            sendImageForPrediction(imageUrl);
         } else {
             updateStatus('GIBS unavailable — using ArcGIS World Imagery', 'error');
             addArcGISOverlay(bbox);
@@ -493,6 +499,112 @@
     }
 
 
+    // ── Weather Prediction ───────────────────────────────────────────────
+    function sendImageForPrediction(imageUrl) {
+        // Show the results panel with loading state
+        resultsPanel.classList.remove('hidden');
+        resultsLoading.classList.remove('hidden');
+        resultsBody.innerHTML = '';
+        updateStatus('Analyzing cloud patterns...', 'success');
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = async () => {
+            try {
+                // Draw raw satellite image to canvas (no padding/metadata)
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                const formData = new FormData();
+                formData.append('image', blob, 'satellite_capture.png');
+
+                const response = await fetch(`${BACKEND_URL}/predict-upload`, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Server error ${response.status}: ${errText}`);
+                }
+
+                const result = await response.json();
+                console.log('[Predict] Result:', result);
+                resultsLoading.classList.add('hidden');
+                displayResults(result);
+                updateStatus('Weather analysis complete', 'success');
+
+            } catch (err) {
+                console.error('[Predict] Error:', err);
+                resultsLoading.classList.add('hidden');
+                resultsBody.innerHTML = `<div class="results-error">Analysis failed: ${err.message}</div>`;
+                updateStatus('Weather analysis failed', 'error');
+            }
+        };
+        img.onerror = () => {
+            resultsLoading.classList.add('hidden');
+            resultsBody.innerHTML = '<div class="results-error">Failed to load satellite image for analysis.</div>';
+            updateStatus('Could not load image for analysis', 'error');
+        };
+        img.src = imageUrl;
+    }
+
+    function displayResults(data) {
+        let html = '';
+
+        // Detected cloud types summary
+        const detected = data.classes_detected || [];
+        if (detected.length > 0) {
+            html += `<div class="detected-summary">Detected: <strong>${detected.join(', ')}</strong></div>`;
+        } else {
+            html += `<div class="detected-summary">No significant cloud patterns detected.</div>`;
+        }
+
+        // Per-class cards
+        const results = data.results || {};
+        for (const [className, info] of Object.entries(results)) {
+            const isDetected = info.present;
+            html += `
+                <div class="cloud-type-card ${isDetected ? 'detected' : ''}">
+                    <div class="cloud-type-header">
+                        <span class="cloud-type-name">${className}</span>
+                        <span class="cloud-type-badge ${isDetected ? 'present' : 'absent'}">
+                            ${isDetected ? 'Detected' : 'Not found'}
+                        </span>
+                    </div>
+                    <div class="cloud-type-stats">
+                        <span><span class="label">Confidence:</span> ${(info.confidence * 100).toFixed(1)}%</span>
+                        <span><span class="label">Coverage:</span> ${info.coverage_percent}%</span>
+                    </div>
+                    <div class="coverage-bar">
+                        <div class="coverage-bar-fill" style="width: ${Math.min(info.coverage_percent, 100)}%"></div>
+                    </div>
+                    ${isDetected ? `<img class="mask-preview" src="data:image/png;base64,${info.mask_base64}" alt="${className} mask"/>` : ''}
+                </div>
+            `;
+        }
+
+        // Weather analysis from RAG
+        if (data.weather_analysis) {
+            html += `
+                <div class="weather-analysis-section">
+                    <div class="weather-analysis-title">WEATHER FORECAST</div>
+                    <div class="weather-analysis-text">${data.weather_analysis.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>
+                </div>
+            `;
+        }
+
+        resultsBody.innerHTML = html;
+    }
+
+    resultsCloseBtn.addEventListener('click', () => {
+        resultsPanel.classList.add('hidden');
+    });
+
     function resetAll() {
         // Clear stored data
         selectedPoints.length = 0;
@@ -510,6 +622,10 @@
         if (preview) preview.remove();
 
         polygonEntity = null;
+
+        // Hide results panel
+        resultsPanel.classList.add('hidden');
+        resultsBody.innerHTML = '';
 
         updatePointsUI();
         bboxPanel.classList.add('hidden');

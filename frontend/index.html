@@ -61,6 +61,22 @@
         <div class="bbox-row"><span>West:</span>  <span id="bboxWest">—</span></div>
     </div>
 
+    <!-- Weather Forecast Results Panel -->
+    <div class="results-panel hidden" id="resultsPanel">
+        <div class="results-header">
+            <span class="results-icon">&#9729;</span>
+            <span class="results-title">WEATHER ANALYSIS</span>
+            <button class="results-close" id="resultsCloseBtn">&times;</button>
+        </div>
+        <div id="resultsContent">
+            <div class="results-loading hidden" id="resultsLoading">
+                <div class="loading-spinner small"></div>
+                <span>Analyzing cloud patterns...</span>
+            </div>
+            <div id="resultsBody"></div>
+        </div>
+    </div>
+
     <!-- Loading Overlay -->
     <div id="loading-overlay" class="hidden">
         <div class="loading-spinner"></div>
