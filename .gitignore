@@ -1,0 +1,12 @@
+# Ignore environment and dependencies
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Ignore data and weights
+data/
+# backend/model/
+*.pth
+*.pt
+docs/
