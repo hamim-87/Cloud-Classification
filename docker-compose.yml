@@ -23,15 +23,18 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./backend/model:/app/model
     networks:
       - eyes-network
+    environment:
+      - MODEL_PATH=/app/model/best_model (2).pth
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 15s
 
 networks:
   eyes-network:
