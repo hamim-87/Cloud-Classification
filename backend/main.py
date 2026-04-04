@@ -28,7 +28,7 @@ PROJECT_ROOT = BACKEND_DIR.parent
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-MODEL_WEIGHTS = BACKEND_DIR / "ml_project_inference" / "best.pth"
+MODEL_WEIGHTS = BACKEND_DIR / "UnetWithCls" / "best.pth"
 
 # ── Global references (filled at startup) ────────────────────────────────────
 model: CloudSegmentationModel | None = None
