@@ -28,7 +28,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-MODEL_WEIGHTS = BACKEND_DIR / "model" / "best_model (2).pth"
+MODEL_WEIGHTS = BACKEND_DIR / "ml_project_inference" / "best.pth"
 
 # ── Global references (filled at startup) ────────────────────────────────────
 model: CloudSegmentationModel | None = None

@@ -1,7 +1,7 @@
 """
 Cloud Segmentation Inference Module
-Loads a trained UNet++ model and runs inference on satellite images.
-Returns per-class segmentation masks and classification results.
+Loads a trained TimmUNetWithCls model and runs inference on satellite images.
+Returns per-class segmentation masks, classification confidence, and coverage.
 """
 
 import base64
@@ -10,30 +10,117 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import albumentations as A
+import cv2
 import numpy as np
+import timm
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from albumentations.pytorch import ToTensorV2
 from PIL import Image
-
-import segmentation_models_pytorch as smp
 
 logger = logging.getLogger(__name__)
 
-# ── Class labels (index order matches training) ──────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
 CLASS_NAMES = ["Fish", "Flower", "Gravel", "Sugar"]
 
-# ── Preprocessing constants (must match training) ────────────────────────────
-IMAGENET_MEAN = [0.485, 0.456, 0.406]
-IMAGENET_STD = [0.229, 0.224, 0.225]
-INPUT_HEIGHT = 320
-INPUT_WIDTH = 480
+BACKBONE_NAME_MAP = {
+    "resnet34": "resnet34",
+    "efficientnet-b1": "efficientnet_b1",
+    "resnext101_32x8d_wsl": "resnext101_32x8d",
+    "resnext101_32x16d_wsl": "resnext101_32x16d",
+}
 
-# ── Detection thresholds ─────────────────────────────────────────────────────
-PIXEL_THRESHOLD = 0.5        # probability above which a pixel is "positive"
-MIN_AREA_PIXELS = 100        # minimum positive pixels to consider a class present
+IMAGE_SIZE = 384
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+DEFAULT_BACKBONE = "efficientnet-b1"
+PIXEL_THRESHOLD = 0.5
+CLS_THRESHOLD = 0.5
+MIN_AREA_PIXELS = 100
 
+
+# ── Model Architecture ───────────────────────────────────────────────────────
+
+class ConvBlock(nn.Module):
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class UpBlock(nn.Module):
+    def __init__(self, in_ch, skip_ch, out_ch):
+        super().__init__()
+        self.conv = ConvBlock(in_ch + skip_ch, out_ch)
+
+    def forward(self, x, skip):
+        x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+        x = torch.cat([x, skip], dim=1)
+        return self.conv(x)
+
+
+class TimmUNetWithCls(nn.Module):
+    def __init__(
+        self,
+        backbone,
+        num_classes=4,
+        use_cls_head=True,
+        pretrained=False,
+        decoder_channels=(256, 128, 64, 32),
+    ):
+        super().__init__()
+        timm_name = BACKBONE_NAME_MAP[backbone]
+        self.encoder = timm.create_model(
+            timm_name,
+            pretrained=pretrained,
+            features_only=True,
+            out_indices=(0, 1, 2, 3, 4),
+        )
+        enc_ch = self.encoder.feature_info.channels()
+
+        self.center = ConvBlock(enc_ch[-1], decoder_channels[0])
+        up_blocks = []
+        in_ch = decoder_channels[0]
+        for idx, skip_ch in enumerate(reversed(enc_ch[:-1])):
+            out_ch = decoder_channels[min(idx + 1, len(decoder_channels) - 1)]
+            up_blocks.append(UpBlock(in_ch, skip_ch, out_ch))
+            in_ch = out_ch
+        self.up_blocks = nn.ModuleList(up_blocks)
+        self.seg_head = nn.Conv2d(in_ch, num_classes, kernel_size=1)
+
+        self.use_cls_head = use_cls_head
+        self.cls_head = nn.Linear(enc_ch[-1], num_classes) if use_cls_head else None
+
+    def forward(self, x):
+        inp_size = x.shape[-2:]
+        feats = self.encoder(x)
+        y = self.center(feats[-1])
+        for up, skip in zip(self.up_blocks, reversed(feats[:-1])):
+            y = up(y, skip)
+        seg = self.seg_head(y)
+        seg = F.interpolate(seg, size=inp_size, mode="bilinear", align_corners=False)
+        cls = None
+        if self.use_cls_head and self.cls_head is not None:
+            pooled = F.adaptive_avg_pool2d(feats[-1], 1).flatten(1)
+            cls = self.cls_head(pooled)
+        return {"seg_logits": seg, "cls_logits": cls}
+
+
+# ── Inference Wrapper ─────────────────────────────────────────────────────────
 
 class CloudSegmentationModel:
-    """Singleton wrapper around the trained UNet++ model."""
+    """Singleton wrapper around the trained TimmUNetWithCls model."""
 
     _instance: Optional["CloudSegmentationModel"] = None
 
@@ -41,116 +128,97 @@ class CloudSegmentationModel:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info("Using device: %s", self.device)
 
-        # Build the same architecture used during training
-        self.model = smp.UnetPlusPlus(
-            encoder_name="timm-efficientnet-b4",
-            encoder_weights=None,          # we load our own weights
-            in_channels=3,
-            classes=len(CLASS_NAMES),
+        self.model = TimmUNetWithCls(
+            backbone=DEFAULT_BACKBONE,
+            num_classes=len(CLASS_NAMES),
+            use_cls_head=True,
+            pretrained=False,
         )
 
-        # Load trained weights
         weights_path = Path(weights_path)
         if not weights_path.exists():
             raise FileNotFoundError(
                 f"Model weights not found at {weights_path}. "
-                "Place your best_model.pth in the backend/model/ directory."
+                "Place your best.pth in the backend/ml_project_inference/ directory."
             )
 
-        state_dict = torch.load(weights_path, map_location=self.device, weights_only=True)
-
-        # Strip "model." prefix if present (common when saved from a training wrapper)
-        cleaned = {}
-        for k, v in state_dict.items():
-            new_key = k.removeprefix("model.")
-            cleaned[new_key] = v
-        self.model.load_state_dict(cleaned, strict=False)
+        ckpt = torch.load(weights_path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(ckpt["model"])
         self.model.to(self.device)
         self.model.eval()
-        logger.info("Model loaded successfully from %s", weights_path)
+        logger.info(
+            "Model loaded from %s (epoch=%s, score=%s)",
+            weights_path, ckpt.get("epoch"), ckpt.get("score", "N/A"),
+        )
+
+        self.transform = A.Compose([
+            A.Resize(IMAGE_SIZE, IMAGE_SIZE, interpolation=1),
+            A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ToTensorV2(),
+        ])
 
     @classmethod
     def get_instance(cls, weights_path: str | Path) -> "CloudSegmentationModel":
-        """Return (or create) the singleton model instance."""
         if cls._instance is None:
             cls._instance = cls(weights_path)
         return cls._instance
 
-    # ── Preprocessing ────────────────────────────────────────────────────────
-    def _preprocess(self, image: Image.Image) -> torch.Tensor:
-        """Resize, normalise, and convert a PIL image to a model-ready tensor."""
-        image = image.convert("RGB")
-        image = image.resize((INPUT_WIDTH, INPUT_HEIGHT), Image.BILINEAR)
-
-        arr = np.array(image, dtype=np.float32) / 255.0          # (H, W, 3)
-
-        # ImageNet normalisation
-        mean = np.array(IMAGENET_MEAN, dtype=np.float32)
-        std = np.array(IMAGENET_STD, dtype=np.float32)
-        arr = (arr - mean) / std
-
-        # HWC → CHW → batch dim
-        tensor = torch.from_numpy(arr.transpose(2, 0, 1)).unsqueeze(0)
-        return tensor.to(self.device)
-
-    # ── Mask encoding ────────────────────────────────────────────────────────
     @staticmethod
     def _mask_to_base64_png(mask: np.ndarray) -> str:
-        """Convert a 2-D uint8 mask (0/255) to a base64-encoded PNG string."""
         img = Image.fromarray(mask, mode="L")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    # ── Public inference method ──────────────────────────────────────────────
+    def _preprocess(self, image_path: Path):
+        image_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image_bgr is None:
+            raise FileNotFoundError(f"Cannot read image: {image_path}")
+        original_image = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        transformed = self.transform(image=original_image)
+        tensor = transformed["image"].unsqueeze(0).to(self.device)
+        return tensor, original_image
+
     @torch.no_grad()
     def predict(self, image_path: str | Path) -> dict:
-        """
-        Run inference on a single image.
-
-        Returns
-        -------
-        dict  with keys:
-            image_size   : {width, height} of the *original* image
-            results      : per-class dict with mask_base64, confidence, coverage, present
-            classes_detected : list of class names that are present
-        """
         image_path = Path(image_path)
-        original_image = Image.open(image_path).convert("RGB")
-        orig_w, orig_h = original_image.size
+        tensor, original_image = self._preprocess(image_path)
+        orig_h, orig_w = original_image.shape[:2]
 
-        # Preprocess & run model
-        tensor = self._preprocess(original_image)
-        logits = self.model(tensor)                      # (1, 4, H, W)
-        probs = torch.sigmoid(logits).squeeze(0)         # (4, H, W)
-        probs_np = probs.cpu().numpy()                   # (4, H, W)
+        outputs = self.model(tensor)
+        seg_logits = outputs["seg_logits"]
+        cls_logits = outputs["cls_logits"]
+
+        # Classification confidence from cls head
+        cls_probs = torch.sigmoid(cls_logits[0]).cpu().numpy()
+
+        # Segmentation masks resized to original dimensions
+        seg_probs = torch.sigmoid(seg_logits[0])
+        seg_probs_resized = F.interpolate(
+            seg_probs.unsqueeze(0),
+            size=(orig_h, orig_w),
+            mode="bilinear",
+            align_corners=False,
+        )[0].cpu().numpy()
 
         results = {}
         classes_detected = []
 
         for idx, class_name in enumerate(CLASS_NAMES):
-            prob_map = probs_np[idx]                      # (H, W) float32 0-1
+            binary_mask = (seg_probs_resized[idx] >= PIXEL_THRESHOLD).astype(np.uint8)
+            mask_full = binary_mask * 255
 
-            # Binary mask at model resolution
-            binary_mask = (prob_map >= PIXEL_THRESHOLD).astype(np.uint8)
-
-            # Resize mask back to original image dimensions
-            mask_pil = Image.fromarray(binary_mask * 255, mode="L")
-            mask_pil = mask_pil.resize((orig_w, orig_h), Image.NEAREST)
-            mask_full = np.array(mask_pil)
-
-            # Statistics
-            positive_pixels = int(np.sum(mask_full > 0))
+            positive_pixels = int(np.sum(binary_mask > 0))
             total_pixels = orig_w * orig_h
             coverage = round((positive_pixels / total_pixels) * 100, 2)
-            confidence = round(float(prob_map.mean()), 4)
-            present = positive_pixels >= MIN_AREA_PIXELS
+            confidence = round(float(cls_probs[idx]), 4)
+            present = cls_probs[idx] >= CLS_THRESHOLD and positive_pixels >= MIN_AREA_PIXELS
 
             if present:
                 classes_detected.append(class_name)
 
             results[class_name] = {
-                "present": present,
+                "present": bool(present),
                 "confidence": confidence,
                 "coverage_percent": coverage,
                 "mask_base64": self._mask_to_base64_png(mask_full),

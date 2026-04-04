@@ -4,6 +4,15 @@
     const GIBS_WMS_BASE = 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi';
     const MAX_POINTS = 4;
 
+    const CLASS_COLORS = {
+        Fish:   { r: 0.255, g: 0.412, b: 0.882 },
+        Flower: { r: 1.000, g: 0.843, b: 0.000 },
+        Gravel: { r: 0.180, g: 0.545, b: 0.341 },
+        Sugar:  { r: 0.863, g: 0.078, b: 0.235 },
+    };
+    const OVERLAY_ALPHA = 0.45;
+    let lastSatelliteImageUrl = null;
+
     let viewer = null;
     const selectedPoints = [];
     const markerEntities = [];
@@ -501,6 +510,7 @@
 
     // ── Weather Prediction ───────────────────────────────────────────────
     function sendImageForPrediction(imageUrl) {
+        lastSatelliteImageUrl = imageUrl;
         // Show the results panel with loading state
         resultsPanel.classList.remove('hidden');
         resultsLoading.classList.remove('hidden');
@@ -553,7 +563,55 @@
         img.src = imageUrl;
     }
 
-    function displayResults(data) {
+    function loadImage(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = src;
+        });
+    }
+
+    async function buildOverlay(satelliteImg, classResults) {
+        const canvas = document.createElement('canvas');
+        canvas.width = satelliteImg.width;
+        canvas.height = satelliteImg.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(satelliteImg, 0, 0);
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const pixels = imageData.data;
+
+        const classNames = ['Fish', 'Flower', 'Gravel', 'Sugar'];
+        for (const name of classNames) {
+            const info = classResults[name];
+            if (!info || !info.present || !info.mask_base64) continue;
+
+            const color = CLASS_COLORS[name];
+            const maskImg = await loadImage('data:image/png;base64,' + info.mask_base64);
+
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = canvas.width;
+            maskCanvas.height = canvas.height;
+            const maskCtx = maskCanvas.getContext('2d');
+            maskCtx.drawImage(maskImg, 0, 0, canvas.width, canvas.height);
+            const maskData = maskCtx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+            for (let i = 0; i < pixels.length; i += 4) {
+                if (maskData[i] > 127) {
+                    pixels[i]     = Math.round(pixels[i]     * (1 - OVERLAY_ALPHA) + OVERLAY_ALPHA * color.r * 255);
+                    pixels[i + 1] = Math.round(pixels[i + 1] * (1 - OVERLAY_ALPHA) + OVERLAY_ALPHA * color.g * 255);
+                    pixels[i + 2] = Math.round(pixels[i + 2] * (1 - OVERLAY_ALPHA) + OVERLAY_ALPHA * color.b * 255);
+                }
+            }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+        return canvas.toDataURL('image/png');
+    }
+
+    async function displayResults(data) {
         let html = '';
 
         // Detected cloud types summary
@@ -564,8 +622,35 @@
             html += `<div class="detected-summary">No significant cloud patterns detected.</div>`;
         }
 
-        // Per-class cards
+        // Build overlay image
         const results = data.results || {};
+        if (lastSatelliteImageUrl) {
+            try {
+                const satImg = await loadImage(lastSatelliteImageUrl);
+                const overlayDataUrl = await buildOverlay(satImg, results);
+
+                const legendHtml = Object.entries(CLASS_COLORS).map(([name, c]) => {
+                    const conf = results[name] ? (results[name].confidence * 100).toFixed(1) : '0.0';
+                    const cssColor = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+                    return `<span class="legend-item">
+                        <span class="legend-swatch" style="background:${cssColor}"></span>
+                        ${name}: ${conf}%
+                    </span>`;
+                }).join('');
+
+                html += `
+                    <div class="overlay-section">
+                        <div class="overlay-title">SEGMENTATION OVERLAY</div>
+                        <img class="overlay-image" src="${overlayDataUrl}" alt="Segmentation overlay"/>
+                        <div class="overlay-legend">${legendHtml}</div>
+                    </div>
+                `;
+            } catch (err) {
+                console.error('[Overlay] Failed to build overlay:', err);
+            }
+        }
+
+        // Per-class cards
         for (const [className, info] of Object.entries(results)) {
             const isDetected = info.present;
             html += `
@@ -583,12 +668,11 @@
                     <div class="coverage-bar">
                         <div class="coverage-bar-fill" style="width: ${Math.min(info.coverage_percent, 100)}%"></div>
                     </div>
-                    ${isDetected ? `<img class="mask-preview" src="data:image/png;base64,${info.mask_base64}" alt="${className} mask"/>` : ''}
                 </div>
             `;
         }
 
-        // Weather analysis from RAG
+        // Weather analysis
         if (data.weather_analysis) {
             html += `
                 <div class="weather-analysis-section">
