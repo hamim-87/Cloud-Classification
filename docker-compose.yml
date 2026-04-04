@@ -10,8 +10,6 @@ services:
       - backend
     networks:
       - eyes-network
-    environment:
-      - BACKEND_URL=http://backend:8000
     restart: unless-stopped
 
   backend:
@@ -23,21 +21,15 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./backend/model:/app/model
-      - ./backend/papers:/app/papers
-      - ./backend/faiss_index:/app/faiss_index
     networks:
       - eyes-network
-    environment:
-      - MODEL_PATH=/app/model/best_model (2).pth
-      - HUGGINGFACEHUB_API_TOKEN=${HUGGINGFACEHUB_API_TOKEN}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
 networks:
   eyes-network:

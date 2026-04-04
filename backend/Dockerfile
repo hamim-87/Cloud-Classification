@@ -10,14 +10,13 @@ RUN pip install --no-cache-dir \
 
 # Copy application code
 COPY backend/main.py .
-COPY backend/inference.py .
 COPY backend/inference2.py .
 COPY backend/weather_rules.py .
 
 # Copy model weights
-COPY backend/model/ ./model/
+COPY backend/UnetWithCls/ ./UnetWithCls/
 
-RUN mkdir -p /app/data /app/papers /app/faiss_index
+RUN mkdir -p /app/data
 
 EXPOSE 8000
 
