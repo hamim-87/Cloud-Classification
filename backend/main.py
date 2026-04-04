@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ── Paths ────────────────────────────────────────────────────────────────────
 BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_DIR.parent
-load_dotenv(PROJECT_ROOT / ".env")
+# load_dotenv(PROJECT_ROOT / ".env")
 
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)

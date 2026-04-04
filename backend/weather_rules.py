@@ -105,12 +105,6 @@ NO_CLOUDS_DESCRIPTION = (
     "unobstructed solar heating."
 )
 
-GENERAL_CONTEXT = (
-    "\n\nGeneral context: Cloud altitude classification plays a crucial role in "
-    "weather prediction. Atmospheric stability is a key factor — stable atmospheres "
-    "produce flat, layered clouds with mild weather, while unstable atmospheres "
-    "produce towering cumulus with showers and thunderstorms."
-)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -198,7 +192,7 @@ def compute_weather_fusion(
         secondary = top2
         description = UNCERTAIN_DESCRIPTION
 
-    description += GENERAL_CONTEXT
+    description 
 
     forecast = {
         "type": forecast_type,
@@ -221,12 +215,12 @@ def compute_weather_fusion(
 def get_weather_analysis(detected_classes: list[str]) -> str:
     """Simple text-only analysis — used if caller has no coverage data."""
     if not detected_classes:
-        return NO_CLOUDS_DESCRIPTION + GENERAL_CONTEXT
+        return NO_CLOUDS_DESCRIPTION 
     if len(detected_classes) == 1:
         desc = DOMINANT_DESCRIPTIONS.get(detected_classes[0], "")
-        return (desc + GENERAL_CONTEXT) if desc else "Unknown cloud pattern detected."
+        return desc 
     parts = [
         f"**{c}**: {DOMINANT_DESCRIPTIONS.get(c, '')}"
         for c in detected_classes if c in DOMINANT_DESCRIPTIONS
     ]
-    return "\n\n".join(parts) + GENERAL_CONTEXT
+    return "\n\n".join(parts) 
