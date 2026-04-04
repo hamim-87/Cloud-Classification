@@ -56,6 +56,17 @@
         viewer.scene.globe.enableLighting = false;
         viewer.scene.globe.showGroundAtmosphere = true;
 
+        // Explicitly enable camera controls (zoom, rotate, tilt)
+        const controller = viewer.scene.screenSpaceCameraController;
+        controller.enableZoom = true;
+        controller.enableRotate = true;
+        controller.enableTilt = true;
+        controller.enableLook = true;
+        controller.zoomEventTypes = [
+            Cesium.CameraEventType.WHEEL,
+            Cesium.CameraEventType.PINCH,
+        ];
+
         addCloudLayer();
 
         viewer.camera.flyTo({

@@ -11,7 +11,8 @@ RUN pip install --no-cache-dir \
 # Copy application code
 COPY backend/main.py .
 COPY backend/inference.py .
-COPY backend/rag/ ./rag/
+COPY backend/inference2.py .
+COPY backend/weather_rules.py .
 
 # Copy model weights
 COPY backend/model/ ./model/
