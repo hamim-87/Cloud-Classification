@@ -11,11 +11,11 @@ import os
 
 dataset_dir = '/content/sample_data/'
 
-!mkdir -p {dataset_dir}
+# !mkdir -p {dataset_dir}
 
-!mkdir -p {dataset_dir}/train_images
+# !mkdir -p {dataset_dir}/train_images
 
-!unzip -q /content/subtrain_img.zip -d {dataset_dir}/train_images/
+# !unzip -q /content/subtrain_img.zip -d {dataset_dir}/train_images/
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -31,7 +31,7 @@ import torchvision.models as models
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import os
-!pip install segmentation-models-pytorch --quiet
+# !pip install segmentation-models-pytorch --quiet
 import segmentation_models_pytorch as smp
 from tqdm import tqdm
 from sklearn.model_selection import KFold
@@ -43,7 +43,7 @@ from albumentations import (Compose, ShiftScaleRotate, Resize, RandomRotate90,
 from albumentations.pytorch import ToTensorV2
 from torchvision import transforms
 import time
-!pip install torch-lr-finder
+# !pip install torch-lr-finder
 from torch_lr_finder import LRFinder
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
