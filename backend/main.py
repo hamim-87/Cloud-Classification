@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from inference import CloudSegmentationModel
-from weather_rules import get_weather_analysis
+from inference2 import CloudSegmentationModel
+from weather_rules import compute_weather_fusion
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -147,15 +147,22 @@ async def predict_upload(
     logger.info("Running inference on uploaded image %s", save_path.name)
     result = model.predict(save_path)
 
-    # Rule-based weather analysis
-    detected = result.get("classes_detected", [])
-    weather_analysis = get_weather_analysis(detected)
+    # ── 6-step structured fusion weather analysis ────────────────────────
+    fusion = compute_weather_fusion(result.get("results", {}))
+
+    logger.info(
+        "Fusion probabilities: %s  →  forecast: %s (%s)",
+        fusion["probabilities"],
+        fusion["forecast"]["type"],
+        fusion["forecast"]["primary_cloud"],
+    )
 
     return {
         "status": "success",
         "filename": save_path.name,
         **result,
-        "weather_analysis": weather_analysis,
+        **fusion,
+        "weather_analysis": fusion["forecast"]["description"],
     }
 
 

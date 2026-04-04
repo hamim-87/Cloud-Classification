@@ -1,160 +1,232 @@
 """
-Rule-based weather analysis from detected cloud patterns.
-Maps combinations of detected cloud types to meteorological descriptions.
+Structured fusion weather analysis from satellite cloud segmentation outputs.
+
+Pipeline:
+  1. Normalize coverage
+  2. Compute fusion scores  (confidence × normalized_coverage)
+  3. Convert to probability distribution
+  4. Rank cloud types
+  5. Interpret weather (dominant / mixed / uncertain)
+  6. Return strict JSON-compatible dict
 """
 
-# ── Single cloud type descriptions ───────────────────────────────────────────
+from __future__ import annotations
 
-SINGLE_DESCRIPTIONS = {
-    "Fish": (
-        "Fish cloud patterns indicate organized deep convection along convergence zones. "
-        "These formations are associated with moderate to heavy rainfall, converging wind "
-        "fields, and reduced visibility. Expect showers and possible thunderstorm activity "
-        "in the affected region. Fish patterns block 70-90% of incoming solar radiation."
+EPSILON = 1e-8
+
+CLASS_NAMES = ["Fish", "Flower", "Gravel", "Sugar"]
+
+# ── Dominant weather descriptions (prob > 0.55) ─────────────────────────────
+
+DOMINANT_DESCRIPTIONS = {
+    "Gravel": (
+        "Thick Gravel cloud cover dominates the scene, indicating an overcast boundary "
+        "layer with high optical depth. Expect heavy cloud cover with limited solar "
+        "radiation reaching the surface. There is a significant chance of drizzle or "
+        "light rain from these dense, uniform cloud formations. Visibility may be "
+        "reduced to 5–10 km. Surface temperatures will remain suppressed."
     ),
     "Flower": (
-        "Flower cloud patterns represent open-cell convection typically found in post-frontal "
-        "environments. These indicate a stabilizing atmosphere with diminishing precipitation "
-        "as conditions improve. The mix of cloudy and clear cells allows 40-60% solar "
-        "transmission. Cold air outbreaks often produce these patterns with northwesterly "
-        "flow in the northern hemisphere."
+        "Flower cloud patterns dominate, indicating mid-level open-cell convection "
+        "characteristic of a post-frontal or unstable environment. Expect variable "
+        "conditions with intermittent showers possible as convective cells cycle. "
+        "The mix of cloudy and clear cells allows 40–60 % solar transmission. "
+        "Conditions may change over the next 6–12 hours as the instability evolves."
     ),
-    "Gravel": (
-        "Gravel cloud patterns are small, uniform cloud formations indicating a stable, "
-        "well-mixed boundary layer. These shallow clouds produce no significant precipitation "
-        "and permit 50-70% solar transmission. Weather conditions are generally fair with "
-        "good visibility. Gravel patterns often form in stable trade wind environments."
+    "Fish": (
+        "Fish cloud formations dominate, revealing organized deep convection along "
+        "convergence zones and strong wind-shear patterns. Expect moderate to heavy "
+        "rainfall, converging wind fields, and reduced visibility. Thunderstorm "
+        "activity is likely in the core of these formations. Fish patterns block "
+        "70–90 % of incoming solar radiation."
     ),
     "Sugar": (
-        "Sugar cloud patterns are very thin, scattered shallow clouds found in trade wind "
-        "regions. They indicate steady easterly trade winds and a stable lower atmosphere. "
-        "No precipitation is expected. These clouds allow 60-80% of solar radiation through "
-        "and are associated with fair weather, excellent visibility, and calm to light winds."
+        "Sugar cloud patterns dominate — thin, scattered shallow cumulus typical of "
+        "trade-wind regions. Fair weather prevails with excellent visibility exceeding "
+        "30 km, no precipitation, and calm to light easterly winds. Solar radiation "
+        "transmission is 60–80 %. Conditions are expected to remain stable."
     ),
 }
 
-# ── Combined cloud type descriptions ─────────────────────────────────────────
+# ── Mixed weather descriptions (top-2 both > 0.30) ──────────────────────────
 
-COMBINED_DESCRIPTIONS = {
-    frozenset(["Fish", "Sugar"]): (
-        "When both Fish and Sugar cloud patterns are observed together, it indicates "
-        "a transition zone between active convective regions and stable trade wind "
-        "environments. The weather may be variable with localized showers near Fish "
-        "formations while surrounding areas remain fair. This combination suggests "
-        "a convective disturbance embedded within an otherwise stable atmosphere."
-    ),
-    frozenset(["Flower", "Gravel"]): (
-        "When Flower and Gravel patterns coexist, it indicates a post-frontal environment "
-        "where the atmosphere is stabilizing. The open-cell Flower structures are gradually "
-        "breaking down into the smaller, more uniform Gravel patterns. Weather conditions "
-        "are improving with decreasing shower activity and increasing sunshine. This "
-        "transition typically completes within 12-24 hours."
-    ),
+MIXED_DESCRIPTIONS = {
     frozenset(["Fish", "Flower"]): (
-        "The simultaneous presence of Fish and Flower patterns indicates a complex "
-        "atmospheric situation with both organized convection and post-frontal clearing. "
-        "This may signal an approaching secondary cold front or a tropical disturbance "
-        "interacting with a mid-latitude weather system. Forecast uncertainty is higher "
-        "and conditions may change rapidly within 6-12 hours."
+        "A mix of Fish and Flower patterns indicates organized convection interacting "
+        "with post-frontal instability. Showers are likely near Fish formations while "
+        "Flower cells bring intermittent clearing. Conditions may shift rapidly within "
+        "6–12 hours. Visibility is variable."
     ),
     frozenset(["Fish", "Gravel"]): (
-        "Fish and Gravel patterns together suggest localized convective activity within "
-        "a generally stable environment. Showers are likely confined to narrow convergence "
-        "zones marked by Fish formations, while surrounding areas under Gravel patterns "
-        "remain dry. This contrast indicates a spatially variable weather regime."
+        "Fish formations embedded within a Gravel-dominated boundary layer suggest "
+        "localized deep convection within an otherwise overcast environment. Heavy "
+        "rain is confined to convergence zones while surrounding areas see drizzle "
+        "or persistent cloud cover."
     ),
-    frozenset(["Fish", "Flower", "Gravel"]): (
-        "The presence of Fish, Flower, and Gravel patterns indicates a transitioning "
-        "atmosphere with active convection (Fish), post-frontal clearing (Flower), and "
-        "stable regions (Gravel). Weather is highly variable across the area — expect "
-        "showers near Fish formations, improving conditions near Flower patterns, and "
-        "fair weather under Gravel. The system is evolving and conditions may change "
-        "within 6-12 hours."
+    frozenset(["Fish", "Sugar"]): (
+        "Fish patterns alongside Sugar clouds indicate a convective disturbance "
+        "embedded in an otherwise fair and stable trade-wind environment. Localized "
+        "showers are expected near Fish formations while surrounding areas remain "
+        "clear and dry."
     ),
-    frozenset(["Fish", "Flower", "Sugar"]): (
-        "This combination of Fish, Flower, and Sugar patterns reveals a complex "
-        "interaction between organized convection, post-frontal dynamics, and trade wind "
-        "stability. Precipitation is likely near Fish formations with clearing near "
-        "Flower patterns and fair conditions under Sugar clouds. Rapid weather changes "
-        "are possible as these regimes interact."
-    ),
-    frozenset(["Fish", "Gravel", "Sugar"]): (
-        "Fish patterns alongside Gravel and Sugar indicate a convective disturbance "
-        "embedded in an otherwise stable and fair environment. Localized heavy showers "
-        "are expected near Fish formations while the broader region remains dry and "
-        "sunny. The stable background suggests the convective activity is isolated "
-        "and may dissipate within hours."
-    ),
-    frozenset(["Flower", "Gravel", "Sugar"]): (
-        "Flower, Gravel, and Sugar patterns together indicate a predominantly stable "
-        "and fair weather regime with remnants of post-frontal activity (Flower). "
-        "No significant precipitation is expected. The atmosphere is trending toward "
-        "full stability with excellent visibility and mostly sunny conditions."
-    ),
-    frozenset(["Fish", "Sugar", "Flower"]): None,  # covered above
-    frozenset(["Fish", "Flower", "Gravel", "Sugar"]): (
-        "When multiple cloud pattern types (Fish, Flower, Gravel, Sugar) are all detected "
-        "in a satellite image, it indicates a highly complex atmospheric situation with "
-        "multiple weather regimes coexisting. This is common near the boundaries of large "
-        "weather systems, tropical convergence zones, or areas where different air masses "
-        "interact. The forecast should consider the dominant pattern by coverage area as "
-        "the primary weather driver while noting potential for rapid changes."
+    frozenset(["Flower", "Gravel"]): (
+        "Flower and Gravel patterns coexist, indicating a post-frontal atmosphere "
+        "where open-cell convection is gradually giving way to stable overcast. "
+        "Shower activity is diminishing and conditions are trending toward thick "
+        "but steady cloud cover with possible drizzle."
     ),
     frozenset(["Flower", "Sugar"]): (
-        "Flower and Sugar patterns together indicate a fair weather environment with "
-        "remnants of post-frontal clearing. The atmosphere is stable with no precipitation "
-        "expected. Conditions are improving with increasing sunshine and light winds."
+        "Flower cells mixed with Sugar clouds suggest a post-frontal environment "
+        "transitioning toward stability. Brief showers are possible near Flower "
+        "formations but the overall trend is fair. Sunshine becomes more prevalent "
+        "as Sugar patterns expand."
     ),
     frozenset(["Gravel", "Sugar"]): (
-        "Gravel and Sugar patterns together indicate a very stable trade wind environment "
-        "with fair weather. No precipitation is expected. These shallow cloud formations "
-        "allow significant solar radiation through, resulting in warm, pleasant conditions "
-        "with excellent visibility."
+        "Gravel and Sugar patterns together indicate a boundary layer split between "
+        "thick low cloud and scattered fair-weather cumulus. Expect partial cloud "
+        "cover with no significant precipitation. Conditions are stable with moderate "
+        "visibility."
     ),
 }
 
+UNCERTAIN_DESCRIPTION = (
+    "All cloud types show similar, relatively low probabilities, indicating a "
+    "transitional or uncertain atmospheric state. No single cloud regime dominates. "
+    "Weather conditions are likely variable with mixed cloud cover, light and "
+    "variable winds, and no strong precipitation signal. Further satellite passes "
+    "are recommended to refine the forecast."
+)
+
 NO_CLOUDS_DESCRIPTION = (
-    "No significant cloud patterns are detected in the satellite imagery. The "
-    "atmosphere is dominated by clear or near-clear skies, indicating strong "
-    "high-pressure dominance with subsiding air preventing cloud formation. Weather "
-    "conditions are expected to be fair with excellent visibility exceeding 30 km, "
-    "no precipitation, and calm to light winds. Surface temperatures may be higher "
-    "than average due to unobstructed solar heating during the day, and cooler at "
-    "night due to radiative cooling."
+    "No significant cloud patterns are detected in the satellite imagery. Clear "
+    "or near-clear skies prevail under strong high-pressure dominance. Fair "
+    "weather with excellent visibility (>30 km), no precipitation, and calm to "
+    "light winds. Daytime surface temperatures may be above average due to "
+    "unobstructed solar heating."
 )
 
 GENERAL_CONTEXT = (
-    "\n\nGeneral context: Cloud altitude classification plays a crucial role in weather "
-    "prediction. Atmospheric stability is a key factor — stable atmospheres produce flat, "
-    "layered clouds with mild weather, while unstable atmospheres produce towering cumulus "
-    "with showers and thunderstorms. Cloud pattern orientation and movement reveal wind "
-    "conditions at cloud level."
+    "\n\nGeneral context: Cloud altitude classification plays a crucial role in "
+    "weather prediction. Atmospheric stability is a key factor — stable atmospheres "
+    "produce flat, layered clouds with mild weather, while unstable atmospheres "
+    "produce towering cumulus with showers and thunderstorms."
 )
 
 
+# ── Public API ───────────────────────────────────────────────────────────────
+
+def compute_weather_fusion(
+    class_results: dict[str, dict],
+) -> dict:
+    """
+    Full 6-step structured fusion pipeline.
+
+    Parameters
+    ----------
+    class_results : dict
+        Keyed by class name ("Fish", "Flower", "Gravel", "Sugar").
+        Each value must contain ``confidence`` (0–1 float) and
+        ``coverage_percent`` (0–100 float).
+
+    Returns
+    -------
+    dict  matching the strict output schema.
+    """
+
+    # Collect raw values (use 0 for missing classes) ──────────────────────
+    confidences: dict[str, float] = {}
+    coverages: dict[str, float] = {}
+    for cls in CLASS_NAMES:
+        info = class_results.get(cls, {})
+        confidences[cls] = float(info.get("confidence", 0.0))
+        coverages[cls] = float(info.get("coverage_percent", 0.0))
+
+    # Step 1: Normalize coverage ──────────────────────────────────────────
+    cov_sum = sum(coverages.values()) + EPSILON
+    normalized_coverage = {
+        cls: round(coverages[cls] / cov_sum, 4) for cls in CLASS_NAMES
+    }
+
+    # Step 2: Fusion score  (confidence × normalized_coverage) ────────────
+    scores = {
+        cls: round(confidences[cls] * normalized_coverage[cls], 4)
+        for cls in CLASS_NAMES
+    }
+
+    # Step 3: Probability distribution ────────────────────────────────────
+    score_sum = sum(scores.values()) + EPSILON
+    probabilities = {
+        cls: round(scores[cls] / score_sum, 4) for cls in CLASS_NAMES
+    }
+
+    # Step 4: Ranking (descending by probability) ─────────────────────────
+    ranking = sorted(CLASS_NAMES, key=lambda c: probabilities[c], reverse=True)
+
+    # Step 5: Weather interpretation ──────────────────────────────────────
+    top1 = ranking[0]
+    top2 = ranking[1]
+    p1 = probabilities[top1]
+    p2 = probabilities[top2]
+
+    all_zero = all(coverages[c] == 0.0 for c in CLASS_NAMES)
+
+    if all_zero:
+        forecast_type = "dominant"
+        primary = None
+        secondary = None
+        description = NO_CLOUDS_DESCRIPTION
+    elif p1 > 0.55:
+        forecast_type = "dominant"
+        primary = top1
+        secondary = None
+        description = DOMINANT_DESCRIPTIONS.get(top1, "")
+    elif p1 > 0.30 and p2 > 0.30:
+        forecast_type = "mixed"
+        primary = top1
+        secondary = top2
+        key = frozenset([top1, top2])
+        description = MIXED_DESCRIPTIONS.get(key, "")
+        if not description:
+            # Fallback: concatenate dominant descriptions
+            description = (
+                f"{DOMINANT_DESCRIPTIONS.get(top1, '')} "
+                f"Additionally, {DOMINANT_DESCRIPTIONS.get(top2, '')}"
+            )
+    else:
+        forecast_type = "uncertain"
+        primary = top1
+        secondary = top2
+        description = UNCERTAIN_DESCRIPTION
+
+    description += GENERAL_CONTEXT
+
+    forecast = {
+        "type": forecast_type,
+        "primary_cloud": primary,
+        "secondary_cloud": secondary,
+        "description": description,
+    }
+
+    return {
+        "normalized_coverage": normalized_coverage,
+        "scores": scores,
+        "probabilities": probabilities,
+        "ranking": ranking,
+        "forecast": forecast,
+    }
+
+
+# ── Legacy helper (kept for backward compat) ─────────────────────────────────
+
 def get_weather_analysis(detected_classes: list[str]) -> str:
-    """
-    Return a weather analysis string based on detected cloud types.
-    Uses exact combination matching first, then falls back to individual descriptions.
-    """
+    """Simple text-only analysis — used if caller has no coverage data."""
     if not detected_classes:
-        return NO_CLOUDS_DESCRIPTION
-
-    detected_set = frozenset(detected_classes)
-
-    # Try exact combination match
-    if detected_set in COMBINED_DESCRIPTIONS and COMBINED_DESCRIPTIONS[detected_set] is not None:
-        return COMBINED_DESCRIPTIONS[detected_set] + GENERAL_CONTEXT
-
-    # Single class
+        return NO_CLOUDS_DESCRIPTION + GENERAL_CONTEXT
     if len(detected_classes) == 1:
-        desc = SINGLE_DESCRIPTIONS.get(detected_classes[0], "")
-        return desc + GENERAL_CONTEXT if desc else "Unknown cloud pattern detected."
-
-    # Fallback: combine individual descriptions
-    parts = []
-    for cls in detected_classes:
-        if cls in SINGLE_DESCRIPTIONS:
-            parts.append(f"**{cls}**: {SINGLE_DESCRIPTIONS[cls]}")
-    combined = "\n\n".join(parts)
-    return combined + GENERAL_CONTEXT
+        desc = DOMINANT_DESCRIPTIONS.get(detected_classes[0], "")
+        return (desc + GENERAL_CONTEXT) if desc else "Unknown cloud pattern detected."
+    parts = [
+        f"**{c}**: {DOMINANT_DESCRIPTIONS.get(c, '')}"
+        for c in detected_classes if c in DOMINANT_DESCRIPTIONS
+    ]
+    return "\n\n".join(parts) + GENERAL_CONTEXT

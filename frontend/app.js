@@ -47,6 +47,17 @@
         viewer.scene.globe.enableLighting = false;
         viewer.scene.globe.showGroundAtmosphere = true;
 
+        // Explicitly enable camera controls (zoom, rotate, tilt)
+        const controller = viewer.scene.screenSpaceCameraController;
+        controller.enableZoom = true;
+        controller.enableRotate = true;
+        controller.enableTilt = true;
+        controller.enableLook = true;
+        controller.zoomEventTypes = [
+            Cesium.CameraEventType.WHEEL,
+            Cesium.CameraEventType.PINCH,
+        ];
+
         addCloudLayer();
 
         viewer.camera.flyTo({
@@ -588,8 +599,33 @@
             `;
         }
 
-        // Weather analysis from RAG
-        if (data.weather_analysis) {
+        // ── Fusion probabilities & ranking ───────────────────────────
+        if (data.probabilities) {
+            html += `<div class="weather-analysis-section"><div class="weather-analysis-title">CLOUD PROBABILITIES</div><div class="cloud-type-stats" style="flex-direction:column;gap:6px">`;
+            const ranking = data.ranking || [];
+            for (const cls of ranking) {
+                const pct = ((data.probabilities[cls] || 0) * 100).toFixed(1);
+                html += `
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span style="min-width:60px;font-weight:600">${cls}</span>
+                        <div class="coverage-bar" style="flex:1"><div class="coverage-bar-fill" style="width:${pct}%"></div></div>
+                        <span style="min-width:48px;text-align:right">${pct}%</span>
+                    </div>`;
+            }
+            html += `</div></div>`;
+        }
+
+        // ── Weather forecast ────────────────────────────────────────
+        if (data.forecast) {
+            const f = data.forecast;
+            const typeBadge = f.type === 'dominant' ? '☀️ Dominant' : f.type === 'mixed' ? '🌤️ Mixed' : '❓ Uncertain';
+            html += `
+                <div class="weather-analysis-section">
+                    <div class="weather-analysis-title">WEATHER FORECAST <span style="float:right;font-size:0.85em;opacity:0.8">${typeBadge}</span></div>
+                    <div class="weather-analysis-text">${f.description.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>
+                </div>
+            `;
+        } else if (data.weather_analysis) {
             html += `
                 <div class="weather-analysis-section">
                     <div class="weather-analysis-title">WEATHER FORECAST</div>
