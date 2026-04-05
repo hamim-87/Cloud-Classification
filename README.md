@@ -87,7 +87,7 @@ This is the easiest way to run the project. Docker handles all dependencies for 
 
 ```bash
 git clone https://github.com/hamim-87/Cloud-Classification
-cd .\Cloud-Classification\
+cd Cloud-Classification
 ```
 #### 2. Start All Services
 
