@@ -166,18 +166,9 @@ pip install -r backend/requirements.txt
 
 > ⚠️ **PyTorch note:** The `requirements.txt` pulls the default (CPU) build of PyTorch. If you have a CUDA GPU and want GPU acceleration, install PyTorch manually first by following the instructions at [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally), then run `pip install -r backend/requirements.txt`.
 
-#### 4. Set Up Environment Variables
 
-Create a `.env` file in the **project root** (same level as `docker-compose.yml`):
 
-```bash
-# .env
-HUGGINGFACEHUB_API_TOKEN=your_token_here
-```
-
-> Get your free API token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
-
-#### 5. Run the Backend Server
+#### 4. Run the Backend Server
 
 ```bash
 cd backend
@@ -194,7 +185,7 @@ INFO:     Segmentation model ready.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-#### 6. Serve the Frontend
+#### 5. Serve the Frontend
 
 Open a **new terminal** (keep the backend running), navigate back to the project root, and start a simple static file server:
 
